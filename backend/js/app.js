@@ -4,12 +4,14 @@ const runButton = document.getElementById('runMacroBtn');
 const stopButton = document.getElementById('stopMacroBtn');
 const serverStatus = document.getElementById('serverStatus');
 const captureMouseButton = document.getElementById('captureMouseBtn');
+const mouseStatus = document.getElementById('mouseStatus');
 
 const API_BASE_URL = window.location.origin.startsWith('http')
   ? window.location.origin
   : 'http://localhost:8080';
 const RUN_ENDPOINT = `${API_BASE_URL}/macros/run`;
 const STOP_ENDPOINT = `${API_BASE_URL}/macros/stop`;
+const MOUSE_ENDPOINT = `${API_BASE_URL}/mouse/position`;
 
 const PRESS_KEY_OPTIONS = [
   ['Enter', 'ENTER'],
@@ -384,12 +386,22 @@ function setServerStatus(message, isError = false) {
   serverStatus.style.color = isError ? '#e11d48' : '';
 }
 
+function setMouseStatus(x, y) {
+  if (!mouseStatus) {
+    return;
+  }
+  mouseStatus.textContent = `Mouse: ${x}, ${y}`;
+}
+
 exportButton.addEventListener('click', () => {
   const exportJson = exportWorkspaceAsCommands(workspace, exporters);
   exportOutput.textContent = JSON.stringify(exportJson, null, 2);
 });
 
-function applyCapturedMousePosition() {
+function applyCapturedMousePosition(position = lastMousePosition) {
+  if (!position) {
+    return;
+  }
   const x = Math.round(lastMousePosition.x);
   const y = Math.round(lastMousePosition.y);
   const selected = Blockly.selected;
@@ -411,9 +423,43 @@ function applyCapturedMousePosition() {
 
 window.addEventListener('mousemove', (event) => {
   lastMousePosition = { x: event.screenX, y: event.screenY };
+  setMouseStatus(Math.round(event.screenX), Math.round(event.screenY));
 });
 
-captureMouseButton?.addEventListener('click', applyCapturedMousePosition);
+async function fetchMousePosition() {
+  try {
+    const response = await fetch(MOUSE_ENDPOINT, { method: 'GET' });
+    if (!response.ok) {
+      throw new Error(`Mouse fetch failed: ${response.status}`);
+    }
+    const data = await response.json();
+    if (typeof data.x === 'number' && typeof data.y === 'number') {
+      lastMousePosition = { x: data.x, y: data.y };
+      setMouseStatus(data.x, data.y);
+      return lastMousePosition;
+    }
+  } catch (error) {
+    setServerStatus(error?.message || 'Mouse fetch failed.', true);
+  }
+  return null;
+}
+
+captureMouseButton?.addEventListener('click', async () => {
+  if (window.location.origin.startsWith('http')) {
+    const position = await fetchMousePosition();
+    if (position) {
+      applyCapturedMousePosition(position);
+      return;
+    }
+  }
+  applyCapturedMousePosition(lastMousePosition);
+});
+
+if (window.location.origin.startsWith('http')) {
+  setInterval(() => {
+    fetchMousePosition();
+  }, 500);
+}
 
 async function runMacro() {
   const payload = exportWorkspaceAsCommands(workspace, exporters);

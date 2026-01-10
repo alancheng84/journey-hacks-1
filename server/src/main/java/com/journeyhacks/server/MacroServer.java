@@ -8,10 +8,12 @@ import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 
 import java.awt.AWTException;
+import java.awt.Desktop;
 import java.awt.MouseInfo;
 import java.awt.Point;
 import java.awt.Robot;
 import java.awt.event.KeyEvent;
+import java.awt.event.InputEvent;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -64,6 +66,7 @@ public class MacroServer {
     HttpServer server = HttpServer.create(new InetSocketAddress(port), 0);
     server.createContext("/macros/run", new RunHandler());
     server.createContext("/macros/stop", new StopHandler());
+    server.createContext("/mouse/position", new MousePositionHandler());
     server.createContext("/", new StaticHandler(uiRoot));
     server.setExecutor(Executors.newCachedThreadPool());
     server.start();
@@ -89,6 +92,11 @@ public class MacroServer {
         request.steps = List.of();
       }
       lastRequest.set(request);
+      running.set(false);
+      Thread current = macroThread.getAndSet(null);
+      if (current != null) {
+        current.interrupt();
+      }
       running.set(true);
 
       macroExecutor.submit(() -> runMacroSteps(request.steps));
@@ -117,6 +125,22 @@ public class MacroServer {
         current.interrupt();
       }
       sendJson(exchange, 200, Map.of("message", "Stopped."));
+    }
+  }
+
+  private class MousePositionHandler implements HttpHandler {
+    @Override
+    public void handle(HttpExchange exchange) throws IOException {
+      if (handleOptions(exchange)) {
+        return;
+      }
+      if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+        sendJson(exchange, 405, Map.of("message", "Method not allowed"));
+        return;
+      }
+
+      Point point = MouseInfo.getPointerInfo().getLocation();
+      sendJson(exchange, 200, Map.of("x", point.x, "y", point.y));
     }
   }
 
@@ -241,8 +265,26 @@ public class MacroServer {
           case "MOUSE_MOVE_TO":
             moveMouseTo(step);
             break;
+          case "MOUSE_CLICK":
+            clickMouse(step);
+            break;
+          case "TYPE_TEXT":
+            typeText(step);
+            break;
+          case "WAIT_MS":
+            waitMs(step);
+            break;
           case "CTRL_KEY":
             pressCtrlKey(step);
+            break;
+          case "PRESS_KEY":
+            pressKey(step);
+            break;
+          case "OPEN_URL":
+            openUrl(step);
+            break;
+          case "REPEAT":
+            repeatSteps(step);
             break;
           case "SET_MODE":
           case "START":
@@ -270,6 +312,38 @@ public class MacroServer {
     robot.mouseMove(x, y);
   }
 
+  private void clickMouse(Map<String, Object> step) {
+    String button = asString(step.get("button"));
+    int count = Math.max(1, asInt(step.get("count")));
+    int mask = InputEvent.BUTTON1_DOWN_MASK;
+    if ("RIGHT".equalsIgnoreCase(button)) {
+      mask = InputEvent.BUTTON3_DOWN_MASK;
+    }
+    for (int i = 0; i < count && running.get(); i++) {
+      robot.mousePress(mask);
+      robot.mouseRelease(mask);
+      sleepQuietly(60);
+    }
+  }
+
+  private void typeText(Map<String, Object> step) {
+    String text = asString(step.get("text"));
+    if (text == null || text.isEmpty()) {
+      return;
+    }
+    for (char ch : text.toCharArray()) {
+      if (!running.get()) {
+        break;
+      }
+      typeChar(ch);
+    }
+  }
+
+  private void waitMs(Map<String, Object> step) {
+    int ms = Math.max(0, asInt(step.get("ms")));
+    sleepQuietly(ms);
+  }
+
   private void pressCtrlKey(Map<String, Object> step) {
     String key = asString(step.get("key"));
     if (key == null || key.isBlank()) {
@@ -285,6 +359,64 @@ public class MacroServer {
     robot.keyRelease(KeyEvent.VK_CONTROL);
   }
 
+  private void pressKey(Map<String, Object> step) {
+    String key = asString(step.get("key"));
+    if (key == null || key.isBlank()) {
+      return;
+    }
+    if ("CTRL_L".equalsIgnoreCase(key)) {
+      robot.keyPress(KeyEvent.VK_CONTROL);
+      robot.keyPress(KeyEvent.VK_L);
+      robot.keyRelease(KeyEvent.VK_L);
+      robot.keyRelease(KeyEvent.VK_CONTROL);
+      return;
+    }
+    int keyCode;
+    switch (key.toUpperCase()) {
+      case "ENTER":
+        keyCode = KeyEvent.VK_ENTER;
+        break;
+      case "ESCAPE":
+        keyCode = KeyEvent.VK_ESCAPE;
+        break;
+      default:
+        keyCode = KeyEvent.VK_UNDEFINED;
+        break;
+    }
+    if (keyCode == KeyEvent.VK_UNDEFINED) {
+      return;
+    }
+    robot.keyPress(keyCode);
+    robot.keyRelease(keyCode);
+  }
+
+  private void openUrl(Map<String, Object> step) {
+    String url = asString(step.get("url"));
+    if (url == null || url.isBlank()) {
+      return;
+    }
+    try {
+      if (Desktop.isDesktopSupported()) {
+        Desktop.getDesktop().browse(URI.create(url));
+      }
+    } catch (Exception ignored) {
+      // Best-effort only.
+    }
+  }
+
+  @SuppressWarnings("unchecked")
+  private void repeatSteps(Map<String, Object> step) {
+    int count = Math.max(1, asInt(step.get("count")));
+    Object nested = step.get("steps");
+    if (!(nested instanceof List)) {
+      return;
+    }
+    List<Map<String, Object>> nestedSteps = (List<Map<String, Object>>) nested;
+    for (int i = 0; i < count && running.get(); i++) {
+      runMacroSteps(nestedSteps);
+    }
+  }
+
   private static int mapKeyCode(String key) {
     switch (key.toUpperCase()) {
       case "A":
@@ -296,6 +428,27 @@ public class MacroServer {
       default:
         return KeyEvent.VK_UNDEFINED;
     }
+  }
+
+  private void typeChar(char ch) {
+    int keyCode = KeyEvent.getExtendedKeyCodeForChar(ch);
+    if (keyCode == KeyEvent.VK_UNDEFINED) {
+      return;
+    }
+    boolean upper = Character.isUpperCase(ch) || isShiftRequired(ch);
+    if (upper) {
+      robot.keyPress(KeyEvent.VK_SHIFT);
+    }
+    robot.keyPress(keyCode);
+    robot.keyRelease(keyCode);
+    if (upper) {
+      robot.keyRelease(KeyEvent.VK_SHIFT);
+    }
+    sleepQuietly(20);
+  }
+
+  private static boolean isShiftRequired(char ch) {
+    return "~!@#$%^&*()_+{}|:\"<>?".indexOf(ch) >= 0;
   }
 
   private static int asInt(Object value) {
