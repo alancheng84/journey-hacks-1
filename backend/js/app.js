@@ -1,5 +1,14 @@
 const exportButton = document.getElementById('exportJsonBtn');
 const exportOutput = document.getElementById('exportOutput');
+const runButton = document.getElementById('runMacroBtn');
+const stopButton = document.getElementById('stopMacroBtn');
+const serverStatus = document.getElementById('serverStatus');
+
+const API_BASE_URL = window.location.origin.startsWith('http')
+  ? window.location.origin
+  : 'http://localhost:8080';
+const RUN_ENDPOINT = `${API_BASE_URL}/macros/run`;
+const STOP_ENDPOINT = `${API_BASE_URL}/macros/stop`;
 
 const KEY_COMBO_OPTIONS = [
   ['C', 'C'],
@@ -57,6 +66,49 @@ const CUSTOM_BLOCKS = [
     }
   },
   {
+    type: 'macro_mouse_wiggle',
+    category: 'Actions',
+    block: {
+      init() {
+        this.appendDummyInput()
+          .appendField('wiggle mouse left/right')
+          .appendField(new Blockly.FieldNumber(20, 1), 'PX')
+          .appendField('px');
+        this.setPreviousStatement(true);
+        this.setNextStatement(true);
+        this.setColour(210);
+      }
+    },
+    toCommand(block) {
+      const px = Number(block.getFieldValue('PX')) || 0;
+      return [
+        { kind: 'ACTION', type: 'MOUSE_MOVE', dx: -px, dy: 0 },
+        { kind: 'ACTION', type: 'MOUSE_MOVE', dx: px, dy: 0 }
+      ];
+    }
+  },
+  {
+    type: 'macro_mouse_move_to',
+    category: 'Actions',
+    block: {
+      init() {
+        this.appendDummyInput()
+          .appendField('move mouse to x')
+          .appendField(new Blockly.FieldNumber(0, 0), 'X')
+          .appendField('y')
+          .appendField(new Blockly.FieldNumber(0, 0), 'Y');
+        this.setPreviousStatement(true);
+        this.setNextStatement(true);
+        this.setColour(210);
+      }
+    },
+    toCommand(block) {
+      const x = Number(block.getFieldValue('X')) || 0;
+      const y = Number(block.getFieldValue('Y')) || 0;
+      return { kind: 'ACTION', type: 'MOUSE_MOVE_TO', x, y };
+    }
+  },
+  {
     type: 'macro_set_mode',
     category: 'Settings',
     block: {
@@ -72,13 +124,30 @@ const CUSTOM_BLOCKS = [
     toCommand(block) {
       return { kind: 'SETTING', type: 'SET_MODE', mode: block.getFieldValue('MODE') || '' };
     }
+  },
+  {
+    type: 'macro_settings_start',
+    category: 'Settings',
+    block: {
+      init() {
+        this.appendDummyInput().appendField('start');
+        if (typeof this.setHat === 'function') {
+          this.setHat(true);
+        }
+        this.setNextStatement(true);
+        this.setColour(120);
+      }
+    },
+    toCommand() {
+      return { kind: 'SETTING', type: 'START' };
+    }
   }
 ];
 
 const TOOLBOX_CONFIG = [
   // { name: 'Macros', blocks: ['controls_repeat_ext'] },
-  { name: 'Actions', blocks: ['text', 'math_number', 'macro_ctrl_key'] },
-  { name: 'Settings', blocks: ['macro_set_mode'] }
+  { name: 'Actions', blocks: ['text', 'math_number', 'macro_ctrl_key', 'macro_mouse_wiggle', 'macro_mouse_move_to'] },
+  { name: 'Settings', blocks: ['macro_settings_start', 'macro_set_mode'] }
 ];
 
 function registerCustomBlocks() {
@@ -140,7 +209,12 @@ function exportWorkspaceAsCommands(workspace, exporters) {
     while (currentBlock) {
       const exporter = exporters[currentBlock.type];
       if (exporter) {
-        steps.push(exporter(currentBlock));
+        const command = exporter(currentBlock);
+        if (Array.isArray(command)) {
+          steps.push(...command);
+        } else {
+          steps.push(command);
+        }
       }
       currentBlock = currentBlock.getNextBlock();
     }
@@ -154,7 +228,60 @@ const toolbox = buildToolboxXml(TOOLBOX_CONFIG);
 const workspace = Blockly.inject('blocklyDiv', { toolbox });
 const exporters = createExporters();
 
+function setServerStatus(message, isError = false) {
+  if (!serverStatus) {
+    return;
+  }
+  serverStatus.textContent = message;
+  serverStatus.style.color = isError ? '#e11d48' : '';
+}
+
 exportButton.addEventListener('click', () => {
   const exportJson = exportWorkspaceAsCommands(workspace, exporters);
   exportOutput.textContent = JSON.stringify(exportJson, null, 2);
+});
+
+async function runMacro() {
+  const payload = exportWorkspaceAsCommands(workspace, exporters);
+  exportOutput.textContent = JSON.stringify(payload, null, 2);
+  setServerStatus('Running macro...');
+  try {
+    const response = await fetch(RUN_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (!response.ok) {
+      throw new Error(`Run failed: ${response.status}`);
+    }
+    const data = await response.json().catch(() => null);
+    const message = data?.message || 'Run started.';
+    setServerStatus(message);
+  } catch (error) {
+    setServerStatus(error?.message || 'Run failed.', true);
+  }
+}
+
+async function stopMacro() {
+  setServerStatus('Stopping macro...');
+  try {
+    const response = await fetch(STOP_ENDPOINT, { method: 'POST' });
+    if (!response.ok) {
+      throw new Error(`Stop failed: ${response.status}`);
+    }
+    const data = await response.json().catch(() => null);
+    const message = data?.message || 'Stopped.';
+    setServerStatus(message);
+  } catch (error) {
+    setServerStatus(error?.message || 'Stop failed.', true);
+  }
+}
+
+runButton?.addEventListener('click', runMacro);
+stopButton?.addEventListener('click', stopMacro);
+
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' || event.key === 'F6') {
+    stopMacro();
+  }
 });

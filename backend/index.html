@@ -15,13 +15,19 @@
       <div class="title">Macros</div>
       <div class="subtitle">Build blocks, export clean JSON for Java mapping.</div>
     </div>
-    <button id="exportJsonBtn" type="button" class="primary-btn">Export JSON</button>
+    <div class="topbar-actions">
+      <button id="runMacroBtn" type="button" class="primary-btn">Run</button>
+      <button id="stopMacroBtn" type="button" class="ghost-btn">Stop</button>
+      <button id="exportJsonBtn" type="button" class="primary-btn">Export JSON</button>
+    </div>
   </header>
 
   <main class="workspace">
     <aside class="sidepanel">
       <div class="panel-title">Export Preview</div>
       <pre id="exportOutput" class="export-output"></pre>
+      <div class="panel-title">Server</div>
+      <div id="serverStatus" class="panel-hint">Idle.</div>
       <div class="panel-hint">Tip: add print blocks to see output.</div>
     </aside>
     <div id="blocklyDiv"></div>

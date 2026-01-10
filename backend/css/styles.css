@@ -39,6 +39,13 @@ body {
   box-shadow: 0 6px 18px var(--shadow);
 }
 
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .title {
   font-size: 20px;
   font-weight: 700;
@@ -64,6 +71,20 @@ body {
 
 .primary-btn:hover { transform: translateY(-1px); }
 .primary-btn:active { transform: translateY(1px); }
+
+.ghost-btn {
+  border: 1px solid var(--panel-border);
+  padding: 10px 16px;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink);
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.ghost-btn:hover { transform: translateY(-1px); }
+.ghost-btn:active { transform: translateY(1px); }
 
 .workspace {
   min-height: 0;
