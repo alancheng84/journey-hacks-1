@@ -1,0 +1,121 @@
+:root {
+  --bg: #f6efe6;
+  --ink: #1d1c1a;
+  --accent: #f05d5e;
+  --panel: #ffffff;
+  --panel-border: #e3d9cc;
+  --shadow: rgba(29, 28, 26, 0.1);
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+  font-family: "Space Grotesk", system-ui, sans-serif;
+  color: var(--ink);
+  background:
+    radial-gradient(circle at 10% 10%, #f7d7c4 0%, rgba(247, 215, 196, 0) 40%),
+    radial-gradient(circle at 90% 0%, #f3b7a0 0%, rgba(243, 183, 160, 0) 35%),
+    linear-gradient(180deg, #f6efe6 0%, #f0e5d8 100%);
+}
+
+body {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: 12px;
+  padding: 12px;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 16px;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 14px;
+  box-shadow: 0 6px 18px var(--shadow);
+}
+
+.title {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+}
+
+.subtitle {
+  font-size: 13px;
+  opacity: 0.7;
+}
+
+.primary-btn {
+  border: 0;
+  padding: 10px 16px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 8px 18px rgba(240, 93, 94, 0.35);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.primary-btn:hover { transform: translateY(-1px); }
+.primary-btn:active { transform: translateY(1px); }
+
+.workspace {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  gap: 12px;
+}
+
+.sidepanel {
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 14px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-shadow: 0 6px 18px var(--shadow);
+}
+
+.panel-title {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.export-output {
+  flex: 1;
+  margin: 0;
+  padding: 10px;
+  font-size: 12px;
+  white-space: pre-wrap;
+  background: #f7f2ec;
+  border-radius: 10px;
+  border: 1px dashed #e0d4c6;
+  overflow: auto;
+}
+
+.panel-hint {
+  font-size: 12px;
+  opacity: 0.6;
+}
+
+#blocklyDiv {
+  height: 100%;
+  width: 100%;
+  border-radius: 14px;
+  overflow: hidden;
+  border: 1px solid var(--panel-border);
+  box-shadow: 0 6px 18px var(--shadow);
+}
+
+@media (max-width: 900px) {
+  .workspace { grid-template-columns: 1fr; }
+  .sidepanel { order: 2; }
+  #blocklyDiv { min-height: 60vh; }
+}
