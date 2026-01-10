@@ -3,12 +3,23 @@ const exportOutput = document.getElementById('exportOutput');
 const runButton = document.getElementById('runMacroBtn');
 const stopButton = document.getElementById('stopMacroBtn');
 const serverStatus = document.getElementById('serverStatus');
+const captureMouseButton = document.getElementById('captureMouseBtn');
 
 const API_BASE_URL = window.location.origin.startsWith('http')
   ? window.location.origin
   : 'http://localhost:8080';
 const RUN_ENDPOINT = `${API_BASE_URL}/macros/run`;
 const STOP_ENDPOINT = `${API_BASE_URL}/macros/stop`;
+
+const PRESS_KEY_OPTIONS = [
+  ['Enter', 'ENTER'],
+  ['Esc', 'ESCAPE'],
+  ['Ctrl + L', 'CTRL_L']
+];
+const CLICK_BUTTON_OPTIONS = [
+  ['Left', 'LEFT'],
+  ['Right', 'RIGHT']
+];
 
 const KEY_COMBO_OPTIONS = [
   ['C', 'C'],
@@ -109,6 +120,123 @@ const CUSTOM_BLOCKS = [
     }
   },
   {
+    type: 'macro_mouse_click',
+    category: 'Actions',
+    block: {
+      init() {
+        this.appendDummyInput()
+          .appendField('click')
+          .appendField(new Blockly.FieldDropdown(CLICK_BUTTON_OPTIONS), 'BUTTON')
+          .appendField('x')
+          .appendField(new Blockly.FieldNumber(1, 1), 'COUNT');
+        this.setPreviousStatement(true);
+        this.setNextStatement(true);
+        this.setColour(210);
+      }
+    },
+    toCommand(block) {
+      const count = Number(block.getFieldValue('COUNT')) || 1;
+      return {
+        kind: 'ACTION',
+        type: 'MOUSE_CLICK',
+        button: block.getFieldValue('BUTTON') || 'LEFT',
+        count
+      };
+    }
+  },
+  {
+    type: 'macro_type_text',
+    category: 'Actions',
+    block: {
+      init() {
+        this.appendDummyInput()
+          .appendField('type text')
+          .appendField(new Blockly.FieldTextInput('hello'), 'TEXT');
+        this.setPreviousStatement(true);
+        this.setNextStatement(true);
+        this.setColour(210);
+      }
+    },
+    toCommand(block) {
+      return { kind: 'ACTION', type: 'TYPE_TEXT', text: block.getFieldValue('TEXT') || '' };
+    }
+  },
+  {
+    type: 'macro_wait_ms',
+    category: 'Actions',
+    block: {
+      init() {
+        this.appendDummyInput()
+          .appendField('wait')
+          .appendField(new Blockly.FieldNumber(250, 0), 'MS')
+          .appendField('ms');
+        this.setPreviousStatement(true);
+        this.setNextStatement(true);
+        this.setColour(210);
+      }
+    },
+    toCommand(block) {
+      const ms = Number(block.getFieldValue('MS')) || 0;
+      return { kind: 'ACTION', type: 'WAIT_MS', ms };
+    }
+  },
+  {
+    type: 'macro_press_key',
+    category: 'Actions',
+    block: {
+      init() {
+        this.appendDummyInput()
+          .appendField('press key')
+          .appendField(new Blockly.FieldDropdown(PRESS_KEY_OPTIONS), 'KEY');
+        this.setPreviousStatement(true);
+        this.setNextStatement(true);
+        this.setColour(210);
+      }
+    },
+    toCommand(block) {
+      return { kind: 'ACTION', type: 'PRESS_KEY', key: block.getFieldValue('KEY') || '' };
+    }
+  },
+  {
+    type: 'macro_open_url',
+    category: 'Actions',
+    block: {
+      init() {
+        this.appendDummyInput()
+          .appendField('open url')
+          .appendField(new Blockly.FieldTextInput('https://'), 'URL');
+        this.setPreviousStatement(true);
+        this.setNextStatement(true);
+        this.setColour(210);
+      }
+    },
+    toCommand(block) {
+      return { kind: 'ACTION', type: 'OPEN_URL', url: block.getFieldValue('URL') || '' };
+    }
+  },
+  {
+    type: 'macro_repeat',
+    category: 'Actions',
+    block: {
+      init() {
+        this.appendDummyInput()
+          .appendField('repeat')
+          .appendField(new Blockly.FieldNumber(2, 1), 'COUNT')
+          .appendField('times');
+        this.appendStatementInput('DO').appendField('do');
+        this.setPreviousStatement(true);
+        this.setNextStatement(true);
+        this.setColour(210);
+      }
+    },
+    toCommand(block, exporters) {
+      const count = Number(block.getFieldValue('COUNT')) || 1;
+      const child = block.getInputTargetBlock('DO');
+      const steps = child ? exportBlockChain(child, exporters) : [];
+      return { kind: 'CONTROL', type: 'REPEAT', count, steps };
+    }
+  },
+  {
     type: 'macro_set_mode',
     category: 'Settings',
     block: {
@@ -146,7 +274,22 @@ const CUSTOM_BLOCKS = [
 
 const TOOLBOX_CONFIG = [
   // { name: 'Macros', blocks: ['controls_repeat_ext'] },
-  { name: 'Actions', blocks: ['text', 'math_number', 'macro_ctrl_key', 'macro_mouse_wiggle', 'macro_mouse_move_to'] },
+  {
+    name: 'Actions',
+    blocks: [
+      'text',
+      'math_number',
+      'macro_ctrl_key',
+      'macro_mouse_wiggle',
+      'macro_mouse_move_to',
+      'macro_mouse_click',
+      'macro_type_text',
+      'macro_wait_ms',
+      'macro_press_key',
+      'macro_open_url',
+      'macro_repeat'
+    ]
+  },
   { name: 'Settings', blocks: ['macro_settings_start', 'macro_set_mode'] }
 ];
 
@@ -200,26 +343,30 @@ function createExporters() {
   return exporters;
 }
 
+function exportBlockChain(startBlock, exporters) {
+  const steps = [];
+  let currentBlock = startBlock;
+  while (currentBlock) {
+    const exporter = exporters[currentBlock.type];
+    if (exporter) {
+      const command = exporter(currentBlock, exporters);
+      if (Array.isArray(command)) {
+        steps.push(...command);
+      } else if (command) {
+        steps.push(command);
+      }
+    }
+    currentBlock = currentBlock.getNextBlock();
+  }
+  return steps;
+}
+
 function exportWorkspaceAsCommands(workspace, exporters) {
   const steps = [];
   const topBlocks = workspace.getTopBlocks(true);
-
   for (const topBlock of topBlocks) {
-    let currentBlock = topBlock;
-    while (currentBlock) {
-      const exporter = exporters[currentBlock.type];
-      if (exporter) {
-        const command = exporter(currentBlock);
-        if (Array.isArray(command)) {
-          steps.push(...command);
-        } else {
-          steps.push(command);
-        }
-      }
-      currentBlock = currentBlock.getNextBlock();
-    }
+    steps.push(...exportBlockChain(topBlock, exporters));
   }
-
   return { steps };
 }
 
@@ -227,6 +374,7 @@ registerCustomBlocks();
 const toolbox = buildToolboxXml(TOOLBOX_CONFIG);
 const workspace = Blockly.inject('blocklyDiv', { toolbox });
 const exporters = createExporters();
+let lastMousePosition = { x: 0, y: 0 };
 
 function setServerStatus(message, isError = false) {
   if (!serverStatus) {
@@ -240,6 +388,32 @@ exportButton.addEventListener('click', () => {
   const exportJson = exportWorkspaceAsCommands(workspace, exporters);
   exportOutput.textContent = JSON.stringify(exportJson, null, 2);
 });
+
+function applyCapturedMousePosition() {
+  const x = Math.round(lastMousePosition.x);
+  const y = Math.round(lastMousePosition.y);
+  const selected = Blockly.selected;
+
+  if (selected && selected.type === 'macro_mouse_move_to') {
+    selected.setFieldValue(String(x), 'X');
+    selected.setFieldValue(String(y), 'Y');
+  } else {
+    const block = workspace.newBlock('macro_mouse_move_to');
+    block.setFieldValue(String(x), 'X');
+    block.setFieldValue(String(y), 'Y');
+    block.initSvg();
+    block.render();
+    block.moveBy(40, 40);
+  }
+
+  setServerStatus(`Captured position: ${x}, ${y}`);
+}
+
+window.addEventListener('mousemove', (event) => {
+  lastMousePosition = { x: event.screenX, y: event.screenY };
+});
+
+captureMouseButton?.addEventListener('click', applyCapturedMousePosition);
 
 async function runMacro() {
   const payload = exportWorkspaceAsCommands(workspace, exporters);

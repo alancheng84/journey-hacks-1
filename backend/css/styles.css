@@ -126,6 +126,12 @@ body {
   opacity: 0.6;
 }
 
+.blocklyTreeLabel {
+  font-family: "Chakra Petch", "Space Grotesk", system-ui, sans-serif;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+}
+
 #blocklyDiv {
   height: 100%;
   width: 100%;
