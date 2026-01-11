@@ -34,7 +34,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class MacroServer {
-  private static final String GEMINI_API_KEY = "AIzaSyAUNY-JoyvOa0POhhS2zeEjCHoWKTSurIw";
+  private static final String GEMINI_API_KEY = "OBFUSCATED";
   private static final String GEMINI_MODEL = "gemini-flash-latest";
   private static final ObjectMapper MAPPER = new ObjectMapper()
       .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
