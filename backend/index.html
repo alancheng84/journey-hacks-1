@@ -25,8 +25,13 @@
 
   <main class="workspace">
     <aside class="sidepanel">
-      <div class="panel-title">Export Preview</div>
-      <pre id="exportOutput" class="export-output"></pre>
+      <div class="panel-title">Gemini</div>
+      <textarea id="aiPrompt" class="ai-input" rows="6" placeholder="Describe the macro you want..."></textarea>
+      <div class="ai-actions">
+        <button id="aiGenerateBtn" type="button" class="primary-btn">Generate JSON</button>
+        <button id="aiMicBtn" type="button" class="ghost-btn">Speak</button>
+      </div>
+      <div id="aiStatus" class="panel-hint">Ready.</div>
       <button id="captureMouseBtn" type="button" class="ghost-btn">Capture mouse position</button>
       <div id="mouseStatus" class="panel-hint">Mouse: --, --</div>
       <div class="panel-title">Server</div>
@@ -35,6 +40,10 @@
     </aside>
     <div id="blocklyDiv"></div>
   </main>
+  <section class="export-panel">
+    <div class="panel-title">Export Preview</div>
+    <pre id="exportOutput" class="export-output"></pre>
+  </section>
 
   <script src="js/app.js"></script>
 </body>

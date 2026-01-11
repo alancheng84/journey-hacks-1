@@ -5,6 +5,10 @@ const stopButton = document.getElementById('stopMacroBtn');
 const serverStatus = document.getElementById('serverStatus');
 const captureMouseButton = document.getElementById('captureMouseBtn');
 const mouseStatus = document.getElementById('mouseStatus');
+const aiPrompt = document.getElementById('aiPrompt');
+const aiGenerateButton = document.getElementById('aiGenerateBtn');
+const aiMicButton = document.getElementById('aiMicBtn');
+const aiStatus = document.getElementById('aiStatus');
 
 const API_BASE_URL = window.location.origin.startsWith('http')
   ? window.location.origin
@@ -12,6 +16,7 @@ const API_BASE_URL = window.location.origin.startsWith('http')
 const RUN_ENDPOINT = `${API_BASE_URL}/macros/run`;
 const STOP_ENDPOINT = `${API_BASE_URL}/macros/stop`;
 const MOUSE_ENDPOINT = `${API_BASE_URL}/mouse/position`;
+const AI_ENDPOINT = `${API_BASE_URL}/ai/generate`;
 
 const PRESS_KEY_OPTIONS = [
   ['Enter', 'ENTER'],
@@ -393,6 +398,14 @@ function setMouseStatus(x, y) {
   mouseStatus.textContent = `Mouse: ${x}, ${y}`;
 }
 
+function setAiStatus(message, isError = false) {
+  if (!aiStatus) {
+    return;
+  }
+  aiStatus.textContent = message;
+  aiStatus.style.color = isError ? '#e11d48' : '';
+}
+
 exportButton.addEventListener('click', () => {
   const exportJson = exportWorkspaceAsCommands(workspace, exporters);
   exportOutput.textContent = JSON.stringify(exportJson, null, 2);
@@ -402,8 +415,8 @@ function applyCapturedMousePosition(position = lastMousePosition) {
   if (!position) {
     return;
   }
-  const x = Math.round(lastMousePosition.x);
-  const y = Math.round(lastMousePosition.y);
+  const x = Math.round(position.x);
+  const y = Math.round(position.y);
   const selected = Blockly.selected;
 
   if (selected && selected.type === 'macro_mouse_move_to') {
@@ -461,9 +474,97 @@ if (window.location.origin.startsWith('http')) {
   }, 500);
 }
 
+async function generateJsonFromPrompt() {
+  if (!aiPrompt) {
+    return;
+  }
+  const prompt = aiPrompt.value.trim();
+  if (!prompt) {
+    setAiStatus('Add a prompt first.', true);
+    return;
+  }
+  setAiStatus('Generating...');
+  try {
+    const response = await fetch(AI_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt })
+    });
+    if (!response.ok) {
+      throw new Error(`AI failed: ${response.status}`);
+    }
+    const data = await response.json();
+    exportOutput.textContent = JSON.stringify(data, null, 2);
+    setAiStatus('Generated.');
+  } catch (error) {
+    setAiStatus(error?.message || 'AI failed.', true);
+  }
+}
+
+aiGenerateButton?.addEventListener('click', generateJsonFromPrompt);
+
+let recognition = null;
+let recognizing = false;
+
+function setupSpeechRecognition() {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRecognition) {
+    setAiStatus('Voice input not supported in this browser.', true);
+    if (aiMicButton) {
+      aiMicButton.disabled = true;
+    }
+    return;
+  }
+  recognition = new SpeechRecognition();
+  recognition.continuous = false;
+  recognition.interimResults = false;
+  recognition.lang = 'en-US';
+
+  recognition.onstart = () => {
+    recognizing = true;
+    setAiStatus('Listening...');
+  };
+  recognition.onend = () => {
+    recognizing = false;
+  };
+  recognition.onerror = (event) => {
+    recognizing = false;
+    setAiStatus(`Voice error: ${event.error}`, true);
+  };
+  recognition.onresult = (event) => {
+    const transcript = event.results[0][0].transcript;
+    aiPrompt.value = aiPrompt.value ? `${aiPrompt.value} ${transcript}` : transcript;
+    setAiStatus('Transcribed.');
+  };
+}
+
+setupSpeechRecognition();
+
+aiMicButton?.addEventListener('click', () => {
+  if (!recognition) {
+    return;
+  }
+  if (recognizing) {
+    recognition.stop();
+  } else {
+    recognition.start();
+  }
+});
+
 async function runMacro() {
-  const payload = exportWorkspaceAsCommands(workspace, exporters);
-  exportOutput.textContent = JSON.stringify(payload, null, 2);
+  let payload = null;
+  const previewText = exportOutput?.textContent?.trim();
+  if (previewText) {
+    try {
+      payload = JSON.parse(previewText);
+    } catch (error) {
+      setServerStatus('Export preview is not valid JSON.', true);
+      return;
+    }
+  }
+  if (!payload) {
+    payload = exportWorkspaceAsCommands(workspace, exporters);
+  }
   setServerStatus('Running macro...');
   try {
     const response = await fetch(RUN_ENDPOINT, {
