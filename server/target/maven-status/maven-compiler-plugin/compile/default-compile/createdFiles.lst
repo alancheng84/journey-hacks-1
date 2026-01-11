@@ -1,0 +1,8 @@
+com\journeyhacks\server\MacroServer$RunHandler.class
+com\journeyhacks\server\MacroServer.class
+com\journeyhacks\server\MacroServer$MacroRequest.class
+com\journeyhacks\server\MacroServer$StopHandler.class
+com\journeyhacks\server\MacroServer$AiGenerateHandler.class
+com\journeyhacks\server\MacroServer$AiModelsHandler.class
+com\journeyhacks\server\MacroServer$MousePositionHandler.class
+com\journeyhacks\server\MacroServer$StaticHandler.class

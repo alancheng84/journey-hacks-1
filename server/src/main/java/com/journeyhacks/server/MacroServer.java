@@ -19,6 +19,9 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -31,6 +34,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class MacroServer {
+  private static final String GEMINI_API_KEY = "AIzaSyAUNY-JoyvOa0POhhS2zeEjCHoWKTSurIw";
+  private static final String GEMINI_MODEL = "gemini-flash-latest";
   private static final ObjectMapper MAPPER = new ObjectMapper()
       .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
@@ -39,6 +44,7 @@ public class MacroServer {
   private final AtomicReference<MacroRequest> lastRequest = new AtomicReference<>();
   private final AtomicReference<Thread> macroThread = new AtomicReference<>();
   private Robot robot;
+  private final HttpClient httpClient = HttpClient.newHttpClient();
 
   public static void main(String[] args) throws Exception {
     int port = 8080;
@@ -67,6 +73,8 @@ public class MacroServer {
     server.createContext("/macros/run", new RunHandler());
     server.createContext("/macros/stop", new StopHandler());
     server.createContext("/mouse/position", new MousePositionHandler());
+    server.createContext("/ai/generate", new AiGenerateHandler());
+    server.createContext("/ai/models", new AiModelsHandler());
     server.createContext("/", new StaticHandler(uiRoot));
     server.setExecutor(Executors.newCachedThreadPool());
     server.start();
@@ -99,7 +107,7 @@ public class MacroServer {
       }
       running.set(true);
 
-      macroExecutor.submit(() -> runMacroSteps(request.steps));
+      macroExecutor.submit(() -> runMacroSteps(request.steps, true));
 
       sendJson(exchange, 200, Map.of(
           "message", "Run started.",
@@ -141,6 +149,82 @@ public class MacroServer {
 
       Point point = MouseInfo.getPointerInfo().getLocation();
       sendJson(exchange, 200, Map.of("x", point.x, "y", point.y));
+    }
+  }
+
+  private class AiGenerateHandler implements HttpHandler {
+    @Override
+    public void handle(HttpExchange exchange) throws IOException {
+      if (handleOptions(exchange)) {
+        return;
+      }
+      if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+        sendJson(exchange, 405, Map.of("message", "Method not allowed"));
+        return;
+      }
+
+      String apiKey = System.getenv("GEMINI_API_KEY");
+      if (apiKey == null || apiKey.isBlank()) {
+        apiKey = GEMINI_API_KEY;
+      }
+      if (apiKey == null || apiKey.isBlank()) {
+        sendJson(exchange, 500, Map.of("message", "Missing Gemini API key."));
+        return;
+      }
+
+      String body = readBody(exchange);
+      Map<String, Object> request = MAPPER.readValue(body, Map.class);
+      String prompt = request.get("prompt") == null ? "" : request.get("prompt").toString();
+      if (prompt.isBlank()) {
+        sendJson(exchange, 400, Map.of("message", "Prompt is required."));
+        return;
+      }
+
+      try {
+        Map<String, Object> aiJson = callGemini(prompt, apiKey);
+        sendJson(exchange, 200, aiJson);
+      } catch (IOException e) {
+        System.out.println("AI request failed: " + e.getMessage());
+        sendJson(exchange, 500, Map.of("message", "AI request failed.", "error", e.getMessage()));
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+        System.out.println("AI request interrupted.");
+        sendJson(exchange, 500, Map.of("message", "AI request interrupted."));
+      }
+    }
+  }
+
+  private class AiModelsHandler implements HttpHandler {
+    @Override
+    public void handle(HttpExchange exchange) throws IOException {
+      if (handleOptions(exchange)) {
+        return;
+      }
+      if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+        sendJson(exchange, 405, Map.of("message", "Method not allowed"));
+        return;
+      }
+
+      String apiKey = System.getenv("GEMINI_API_KEY");
+      if (apiKey == null || apiKey.isBlank()) {
+        apiKey = GEMINI_API_KEY;
+      }
+      if (apiKey == null || apiKey.isBlank()) {
+        sendJson(exchange, 500, Map.of("message", "Missing Gemini API key."));
+        return;
+      }
+
+      try {
+        Map<String, Object> models = listGeminiModels(apiKey);
+        sendJson(exchange, 200, models);
+      } catch (IOException e) {
+        System.out.println("AI model list failed: " + e.getMessage());
+        sendJson(exchange, 500, Map.of("message", "Model list failed.", "error", e.getMessage()));
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+        System.out.println("AI model list interrupted.");
+        sendJson(exchange, 500, Map.of("message", "Model list interrupted."));
+      }
     }
   }
 
@@ -247,8 +331,117 @@ public class MacroServer {
     return "application/octet-stream";
   }
 
-  private void runMacroSteps(List<Map<String, Object>> steps) {
-    macroThread.set(Thread.currentThread());
+  private Map<String, Object> callGemini(String userPrompt, String apiKey)
+      throws IOException, InterruptedException {
+    String systemPrompt =
+        "You are a macro JSON generator. Output ONLY valid JSON with shape: "
+            + "{\"steps\":[...]}.\n"
+            + "Supported action types:\n"
+            + "- {\"kind\":\"ACTION\",\"type\":\"MOUSE_MOVE\",\"dx\":int,\"dy\":int}\n"
+            + "- {\"kind\":\"ACTION\",\"type\":\"MOUSE_MOVE_TO\",\"x\":int,\"y\":int}\n"
+            + "- {\"kind\":\"ACTION\",\"type\":\"MOUSE_CLICK\",\"button\":\"LEFT|RIGHT\",\"count\":int}\n"
+            + "- {\"kind\":\"ACTION\",\"type\":\"TYPE_TEXT\",\"text\":\"...\"}\n"
+            + "- {\"kind\":\"ACTION\",\"type\":\"WAIT_MS\",\"ms\":int}\n"
+            + "- {\"kind\":\"ACTION\",\"type\":\"PRESS_KEY\",\"key\":\"ENTER|ESCAPE|CTRL_L\"}\n"
+            + "- {\"kind\":\"ACTION\",\"type\":\"OPEN_URL\",\"url\":\"https://...\"}\n"
+            + "- {\"kind\":\"CONTROL\",\"type\":\"REPEAT\",\"count\":int,\"steps\":[...]}\n"
+            + "Use integers for coordinates and ms. No explanations.\n"
+            + "User request: " + userPrompt;
+
+    Map<String, Object> payload = Map.of(
+        "contents", List.of(Map.of(
+            "role", "user",
+            "parts", List.of(Map.of("text", systemPrompt))
+        ))
+    );
+    String requestBody = MAPPER.writeValueAsString(payload);
+
+    String model = System.getenv("GEMINI_MODEL");
+    if (model == null || model.isBlank()) {
+      model = GEMINI_MODEL;
+    }
+    String endpoint = "https://generativelanguage.googleapis.com/v1beta/models/"
+        + model + ":generateContent?key=" + apiKey;
+    HttpRequest request = HttpRequest.newBuilder()
+        .uri(URI.create(endpoint))
+        .header("Content-Type", "application/json")
+        .POST(HttpRequest.BodyPublishers.ofString(requestBody))
+        .build();
+
+    HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+    if (response.statusCode() < 200 || response.statusCode() >= 300) {
+      throw new IOException("Gemini error: " + response.statusCode() + " body=" + response.body());
+    }
+
+    Map<String, Object> json = MAPPER.readValue(response.body(), Map.class);
+    String text = extractGeminiText(json);
+    String jsonText = extractJsonObject(text);
+    if (jsonText == null) {
+      return Map.of("message", "No JSON found in AI response.", "raw", text);
+    }
+    Map<String, Object> aiOutput = MAPPER.readValue(jsonText, Map.class);
+    if (!aiOutput.containsKey("steps")) {
+      aiOutput.put("steps", List.of());
+    }
+    return aiOutput;
+  }
+
+  private Map<String, Object> listGeminiModels(String apiKey)
+      throws IOException, InterruptedException {
+    String endpoint = "https://generativelanguage.googleapis.com/v1beta/models?key=" + apiKey;
+    HttpRequest request = HttpRequest.newBuilder()
+        .uri(URI.create(endpoint))
+        .header("Content-Type", "application/json")
+        .GET()
+        .build();
+    HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+    if (response.statusCode() < 200 || response.statusCode() >= 300) {
+      throw new IOException("Gemini model list error: " + response.statusCode() + " body=" + response.body());
+    }
+    return MAPPER.readValue(response.body(), Map.class);
+  }
+
+  private static String extractGeminiText(Map<String, Object> json) {
+    Object candidates = json.get("candidates");
+    if (!(candidates instanceof List) || ((List<?>) candidates).isEmpty()) {
+      return "";
+    }
+    Object first = ((List<?>) candidates).get(0);
+    if (!(first instanceof Map)) {
+      return "";
+    }
+    Object content = ((Map<?, ?>) first).get("content");
+    if (!(content instanceof Map)) {
+      return "";
+    }
+    Object parts = ((Map<?, ?>) content).get("parts");
+    if (!(parts instanceof List) || ((List<?>) parts).isEmpty()) {
+      return "";
+    }
+    Object part = ((List<?>) parts).get(0);
+    if (!(part instanceof Map)) {
+      return "";
+    }
+    Object text = ((Map<?, ?>) part).get("text");
+    return text == null ? "" : text.toString();
+  }
+
+  private static String extractJsonObject(String text) {
+    if (text == null) {
+      return null;
+    }
+    int start = text.indexOf('{');
+    int end = text.lastIndexOf('}');
+    if (start == -1 || end == -1 || end <= start) {
+      return null;
+    }
+    return text.substring(start, end + 1).trim();
+  }
+
+  private void runMacroSteps(List<Map<String, Object>> steps, boolean topLevel) {
+    if (topLevel) {
+      macroThread.set(Thread.currentThread());
+    }
     try {
       for (Map<String, Object> step : steps) {
         if (!running.get()) {
@@ -294,8 +487,10 @@ public class MacroServer {
         sleepQuietly(20);
       }
     } finally {
-      running.set(false);
-      macroThread.set(null);
+      if (topLevel) {
+        running.set(false);
+        macroThread.set(null);
+      }
     }
   }
 
@@ -413,7 +608,7 @@ public class MacroServer {
     }
     List<Map<String, Object>> nestedSteps = (List<Map<String, Object>>) nested;
     for (int i = 0; i < count && running.get(); i++) {
-      runMacroSteps(nestedSteps);
+      runMacroSteps(nestedSteps, false);
     }
   }
 
